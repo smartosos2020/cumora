@@ -53,6 +53,20 @@ test('a scoped REST response cannot delete a Run that arrived over WS after requ
   assert.equal(merged.run2.revision, 1)
 })
 
+test('an empty scoped REST response keeps a Run that arrived after request start', () => {
+  const afterWs = { run2: run('run2', 1, 'running') }
+
+  const merged = mergeTaskRunConversationCache(
+    afterWs,
+    [],
+    'conversation-1',
+    new Set(),
+  )
+
+  assert.deepEqual(Object.keys(merged), ['run2'])
+  assert.equal(merged.run2.revision, 1)
+})
+
 test('an overlapping recovery refresh produces one trailing request', async () => {
   const queue = new TrailingRefreshQueue<number>()
   let releaseFirst: (() => void) | undefined
