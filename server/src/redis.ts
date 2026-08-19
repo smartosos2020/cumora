@@ -85,6 +85,14 @@ export interface MessageNewEvent extends TenantTagged {
      *  optimistic bubble when the WS event races the POST response — id
      *  alone can't match because the optimistic is keyed by tempId. */
     clientId?: string
+    /** Present when this chat message atomically started a Task Run. */
+    taskRun?: {
+      id: string
+      status: 'running'
+      sourceMessageId: string
+      assigneeId: string
+      revision: 1
+    }
     /** When this message is a reply, the id of the quoted-original. */
     quotedMessageId?: string
     /** Inlined summary so the renderer can draw the quote card on receipt

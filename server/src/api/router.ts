@@ -32,6 +32,12 @@ import {
 import { companyTier } from '../tier.js'
 import { createShippingRouter } from './shipping-router.js'
 import { createTaskRunRouter } from './task-run-router.js'
+import {
+  assertChatTaskRunAssignee,
+  ChatTaskRunError,
+  createChatTaskRun,
+  parseChatTaskRunDraft,
+} from '../chat-task-run.js'
 
 /** Re-export so older imports (server/index.ts, agents/cli.ts) keep working
  *  after the storage abstraction moved this constant. */
@@ -3324,6 +3330,17 @@ api.post('/conversations/:id/messages', async (req, res) => {
     ? rawClientId
     : null
 
+  let taskRunDraft
+  try {
+    taskRunDraft = parseChatTaskRunDraft(req.body?.taskRun, body)
+  } catch (e) {
+    if (e instanceof ChatTaskRunError) {
+      res.status(400).json({ error: e.message })
+      return
+    }
+    throw e
+  }
+
   const { rows: convoRows } = await pool.query<{ members: string[]; kind: string }>(
     `SELECT members, kind FROM conversations WHERE id = $1 AND company_id = $2`,
     [id, tenant],
@@ -3336,6 +3353,25 @@ api.post('/conversations/:id/messages', async (req, res) => {
   if (!convo.members.includes(me)) {
     res.status(403).json({ error: 'not a member of this conversation' })
     return
+  }
+  if (taskRunDraft && convo.kind === 'email') {
+    res.status(400).json({ error: 'taskRun is not supported in email conversations' })
+    return
+  }
+  if (taskRunDraft) {
+    try {
+      await assertChatTaskRunAssignee(pool, {
+        companyId: tenant,
+        conversationMembers: convo.members,
+        assigneeId: taskRunDraft.assigneeId,
+      })
+    } catch (e) {
+      if (e instanceof ChatTaskRunError) {
+        res.status(400).json({ error: e.message })
+        return
+      }
+      throw e
+    }
   }
 
   // Email conversations: auto-promote a "chat-style" reply into a real
@@ -3408,22 +3444,43 @@ api.post('/conversations/:id/messages', async (req, res) => {
     }
   }
 
-  const seqResult = await pool.query<{ seq: number }>(
-    `INSERT INTO conversation_counters (conversation_id, next_sequence)
-     VALUES ($1, 2)
-     ON CONFLICT (conversation_id) DO UPDATE SET next_sequence = conversation_counters.next_sequence + 1
-     RETURNING next_sequence - 1 AS seq`,
-    [id],
-  )
-  const sequence = seqResult.rows[0]?.seq ?? 1
-
   const messageId = `m-${randomUUID()}`
-  await pool.query(
-    `INSERT INTO messages (id, conversation_id, author_id, kind, body, sequence, attachment, quoted_message_id, company_id)
-     VALUES ($1,$2,$3,'text',$4,$5,$6::jsonb,$7,$8)`,
-    [messageId, id, me, body, sequence, attachment ? JSON.stringify(attachment) : null, resolvedQuotedId, tenant],
-  )
-  await pool.query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [id])
+  const client = await pool.connect()
+  let sequence = 1
+  let createdTaskRun: Awaited<ReturnType<typeof createChatTaskRun>> | null = null
+  try {
+    await client.query('BEGIN')
+    const seqResult = await client.query<{ seq: number }>(
+      `INSERT INTO conversation_counters (conversation_id, next_sequence)
+       VALUES ($1, 2)
+       ON CONFLICT (conversation_id) DO UPDATE SET next_sequence = conversation_counters.next_sequence + 1
+       RETURNING next_sequence - 1 AS seq`,
+      [id],
+    )
+    sequence = seqResult.rows[0]?.seq ?? 1
+    await client.query(
+      `INSERT INTO messages (id, conversation_id, author_id, kind, body, sequence, attachment, quoted_message_id, company_id)
+       VALUES ($1,$2,$3,'text',$4,$5,$6::jsonb,$7,$8)`,
+      [messageId, id, me, body, sequence, attachment ? JSON.stringify(attachment) : null, resolvedQuotedId, tenant],
+    )
+    if (taskRunDraft) {
+      createdTaskRun = await createChatTaskRun(client, {
+        companyId: tenant,
+        conversationId: id,
+        sourceMessageId: messageId,
+        createdBy: me,
+        draft: taskRunDraft,
+        clientId,
+      })
+    }
+    await client.query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [id])
+    await client.query('COMMIT')
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
 
   // Drop the message into the bus. The mailbox scheduler (subscribed to
   // CH_MESSAGE_NEW) wakes every agent member and lets each decide for itself
@@ -3440,6 +3497,7 @@ api.post('/conversations/:id/messages', async (req, res) => {
       quotedMessageId: resolvedQuotedId ?? undefined,
       quoted: quotedSummary ?? undefined,
       clientId: clientId ?? undefined,
+      taskRun: createdTaskRun ?? undefined,
     },
   })
 
@@ -3482,6 +3540,7 @@ api.post('/conversations/:id/messages', async (req, res) => {
     sequence,
     quotedMessageId: resolvedQuotedId ?? undefined,
     quoted: quotedSummary ?? undefined,
+    taskRun: createdTaskRun ?? undefined,
   })
 })
 
