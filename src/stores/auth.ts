@@ -96,6 +96,7 @@ export const useAuth = create<AuthState>((set) => ({
       import('./boards').then(({ useBoards }) => useBoards.getState().reset()),
       import('./calendar').then(({ useCalendar }) => useCalendar.getState().reset()),
       import('./shipping').then(({ useShipping }) => useShipping.getState().reset()),
+      import('./task-runs').then(({ useTaskRuns }) => useTaskRuns.getState().reset()),
     ])
   },
   /** Append a freshly-created company to the user's set and switch to it. */
@@ -112,6 +113,7 @@ export const useAuth = create<AuthState>((set) => ({
         import('./boards').then(({ useBoards }) => useBoards.getState().reset()),
         import('./calendar').then(({ useCalendar }) => useCalendar.getState().reset()),
         import('./shipping').then(({ useShipping }) => useShipping.getState().reset()),
+        import('./task-runs').then(({ useTaskRuns }) => useTaskRuns.getState().reset()),
       ])
     }
   },

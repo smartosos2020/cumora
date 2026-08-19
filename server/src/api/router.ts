@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import { storage, UPLOAD_DIR, freshenAttachmentUrl, normalizeStorageKey, storageKeyFromPublicUrl } from '../storage.js'
 import { pool } from '../db/pool.js'
-import { CH_MESSAGE_NEW, CH_REACTIONS, CH_CONVO_UPDATED, CH_DOCS, CH_TYPING, CH_CALENDAR_EVENTS, publish } from '../redis.js'
+import { CH_MESSAGE_NEW, CH_REACTIONS, CH_CONVO_UPDATED, CH_DOCS, CH_TYPING, CH_CALENDAR_EVENTS, CH_TASK_RUNS, publish } from '../redis.js'
 import { createPoll, castVote, closePoll, PollError } from '../polls.js'
 import { env } from '../env.js'
 import { startConvene, getActiveConvene } from '../agents/convene.js'
@@ -3500,6 +3500,25 @@ api.post('/conversations/:id/messages', async (req, res) => {
       taskRun: createdTaskRun ?? undefined,
     },
   })
+  if (createdTaskRun) {
+    try {
+      await publish(CH_TASK_RUNS, {
+        type: 'task-run.changed',
+        companyId: tenant,
+        runId: createdTaskRun.id,
+        conversationId: id,
+        revision: createdTaskRun.revision,
+        status: createdTaskRun.status,
+        kind: 'run.created',
+        actorId: me,
+      })
+    } catch (error) {
+      // Message + Run are already committed and the message broadcast may
+      // already have landed. Reconnect reconciliation through REST repairs a
+      // missed nudge, so don't misreport the successful POST as failed.
+      console.warn('[messages] Task Run realtime publish failed', error)
+    }
+  }
 
   // Fan out APNs to recipients who aren't currently looking at the app
   // (NotificationToasts handles those). Fire-and-forget — push delivery

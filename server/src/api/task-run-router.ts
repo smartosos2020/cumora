@@ -6,6 +6,7 @@ import {
   type TaskRunStatus,
 } from '../../../shared/task-run-state.js'
 import type { AuthedRequest } from '../auth.js'
+import { CH_TASK_RUNS, publish } from '../redis.js'
 import {
   isTaskRunAction,
   planTaskRunAction,
@@ -14,6 +15,26 @@ import {
 
 type CompanyContext = { userId: string; companyId: string }
 type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>
+
+async function publishTaskRunChange(input: {
+  companyId: string
+  runId: string
+  conversationId: string | null
+  revision: number
+  status: TaskRunStatus
+  eventId: string
+  kind: string
+  actorId: string
+}): Promise<void> {
+  try {
+    await publish(CH_TASK_RUNS, { type: 'task-run.changed', ...input })
+  } catch (error) {
+    // Persistence is already committed. Never turn a successful mutation into
+    // a misleading HTTP failure because realtime delivery is temporarily
+    // unavailable; hello/reconnect makes clients reconcile through REST.
+    console.warn('[task-runs] realtime publish failed', error)
+  }
+}
 
 export interface TaskRunRouterDeps {
   pool: Pool
@@ -234,6 +255,7 @@ export function createTaskRunRouter(deps: TaskRunRouterDeps): Router {
 
     const id = `tr-${randomUUID()}`
     const attemptId = `tra-${randomUUID()}`
+    const eventId = `tre-${randomUUID()}`
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
@@ -254,11 +276,22 @@ export function createTaskRunRouter(deps: TaskRunRouterDeps): Router {
         `INSERT INTO task_run_events
           (id, company_id, run_id, attempt_id, actor_id, kind, to_status, revision, data)
          VALUES ($1,$2,$3,$4,$5,'run.created','running',1,$6::jsonb)`,
-        [`tre-${randomUUID()}`, companyId, id, attemptId, userId,
+        [eventId, companyId, id, attemptId, userId,
           JSON.stringify({ sourceMessageId, conversationId })],
       )
       await client.query('COMMIT')
-      res.status(201).json(await runDetail(pool, rows[0]))
+      const detail = await runDetail(pool, rows[0])
+      await publishTaskRunChange({
+        companyId,
+        runId: rows[0].id,
+        conversationId: rows[0].conversationId,
+        revision: rows[0].revision,
+        status: rows[0].status,
+        eventId,
+        kind: 'run.created',
+        actorId: userId,
+      })
+      res.status(201).json(detail)
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {})
       throw error
@@ -283,6 +316,7 @@ export function createTaskRunRouter(deps: TaskRunRouterDeps): Router {
     const client = await pool.connect()
     let updated: TaskRunRow
     let replayed = false
+    let changedEvent: { id: string; kind: string } | null = null
     try {
       await client.query('BEGIN')
       const run = await accessibleRun(client, companyId, userId, runId, true)
@@ -357,15 +391,18 @@ export function createTaskRunRouter(deps: TaskRunRouterDeps): Router {
             result ? JSON.stringify(result) : null, text(body.summary), text(body.consequence), run.id],
         )
         updated = rows[0]
+        const eventId = `tre-${randomUUID()}`
+        const eventKind = `action.${action}`
         await client.query(
           `INSERT INTO task_run_events
             (id, company_id, run_id, attempt_id, actor_id, kind, from_status,
              to_status, revision, idempotency_key, data)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
-          [`tre-${randomUUID()}`, companyId, run.id, attemptId, userId, `action.${action}`,
+          [eventId, companyId, run.id, attemptId, userId, eventKind,
             run.status, plan.toStatus, nextRevision, idempotencyKey,
             JSON.stringify({ reason: optionalText(body.reason, 8_000) })],
         )
+        changedEvent = { id: eventId, kind: eventKind }
         await client.query('COMMIT')
       }
     } catch (error) {
@@ -375,7 +412,20 @@ export function createTaskRunRouter(deps: TaskRunRouterDeps): Router {
       client.release()
     }
 
-    res.json({ ...(await runDetail(pool, updated)), idempotentReplay: replayed })
+    const detail = await runDetail(pool, updated)
+    if (changedEvent) {
+      await publishTaskRunChange({
+        companyId,
+        runId: updated.id,
+        conversationId: updated.conversationId,
+        revision: updated.revision,
+        status: updated.status,
+        eventId: changedEvent.id,
+        kind: changedEvent.kind,
+        actorId: userId,
+      })
+    }
+    res.json({ ...detail, idempotentReplay: replayed })
   }))
 
   return router

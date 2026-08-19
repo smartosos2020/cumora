@@ -56,6 +56,11 @@ export const CH_CALENDAR_REMINDER = 'cumora:calendar.reminder'
  *  update / delete / cancel / run-now / dispatcher auto-done so every
  *  client in the company can patch their Calendar view in real time. */
 export const CH_CALENDAR_EVENTS = 'cumora:calendar.events'
+/** Task Run lifecycle changes. Payloads are deliberately thin: revision is
+ *  the ordering cursor and clients re-read the canonical REST representation.
+ *  This keeps REST, reconnect recovery, and every UI surface on one source of
+ *  truth instead of maintaining a second wire-only Run shape. */
+export const CH_TASK_RUNS = 'cumora:task-runs'
 
 /* === Event types ===
  *
@@ -376,6 +381,20 @@ export interface CalendarEventChangedEvent extends TenantTagged {
   actorId: string | null
 }
 
+/** One committed Task Run lifecycle event. Revision is the monotonic cursor;
+ *  renderers use this as an invalidation and fetch the canonical REST detail,
+ *  which also makes reconnect recovery deterministic. */
+export interface TaskRunChangedEvent extends TenantTagged {
+  type: 'task-run.changed'
+  runId: string
+  conversationId: string | null
+  revision: number
+  status: string
+  kind: string
+  actorId: string
+  eventId?: string
+}
+
 /** Poll state changed — a new vote was cast, an existing vote was changed,
  *  or the poll was closed (manually or by the expiration sweeper). Carries
  *  the full denormalized poll snapshot so renderers can patch in place
@@ -411,6 +430,7 @@ export type BroadcastEvent = MessageNewEvent | MessageDeltaEvent | TypingEvent
   | GroupPulledEvent | ConversationUpdatedEvent | ConveneEvent
   | BoardEvent | DocIndexEvent | DocUpdateEvent | DocAwarenessEvent | DocMentionEvent | CalendarReminderEvent
   | CalendarEventChangedEvent
+  | TaskRunChangedEvent
   | PollUpdatedEvent
   | ComputerStatusEvent
 

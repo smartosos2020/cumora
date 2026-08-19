@@ -6,6 +6,7 @@ import {
   CH_STATUS, CH_REACTIONS, CH_POLLS,
   CH_GROUP_PULLED, CH_CONVO_UPDATED, CH_CONVENE,
   CH_BOARDS, CH_DOCS, CH_CALENDAR_REMINDER, CH_CALENDAR_EVENTS, CH_DOC_MENTION,
+  CH_TASK_RUNS,
   publish,
   type DocMentionEvent,
 } from './redis.js'
@@ -587,6 +588,7 @@ export function attachWebSocket(httpServer: Server) {
     CH_STATUS, CH_REACTIONS, CH_POLLS,
     CH_GROUP_PULLED, CH_CONVO_UPDATED, CH_CONVENE,
     CH_BOARDS, CH_DOCS, CH_CALENDAR_REMINDER, CH_CALENDAR_EVENTS, CH_DOC_MENTION,
+    CH_TASK_RUNS,
   ).then((count) => {
     console.log(`[ws] subscribed to ${count} redis channels`)
   })

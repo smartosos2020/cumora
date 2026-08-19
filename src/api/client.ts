@@ -5,6 +5,7 @@ import type {
   CalendarReminderChannel,ComputerStatus, ComputerKind, EngineId,
 } from '@/types'
 import { getAuthToken, getActiveCompanyId, useAuth } from '@/stores/auth'
+import type { TaskRunStatus } from '../../shared/task-run-state'
 
 const DEVTOOLS_KEY = 'cumora.devtools.enabled'
 const SERVER_URL_KEY = 'cumora.serverUrl'
@@ -132,6 +133,68 @@ export interface ApiMessage extends Message {
   createdAt?: string
   reactions?: Array<{ emoji: string; count: number; mine?: boolean; users?: string[] }>
 }
+
+export interface ApiTaskRun {
+  id: string
+  companyId: string
+  conversationId: string | null
+  sourceMessageId: string | null
+  createdBy: string
+  assigneeId: string | null
+  nextActorId: string | null
+  title: string
+  summary: string
+  consequence: string
+  status: TaskRunStatus
+  pausedFromStatus: TaskRunStatus | null
+  revision: number
+  currentAttempt: number
+  result: Record<string, unknown> | null
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface ApiTaskRunAttempt {
+  id: string
+  attemptNo: number
+  agentRunId: string | null
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  error: string | null
+  output: Record<string, unknown> | null
+  startedAt: string
+  endedAt: string | null
+}
+
+export interface ApiTaskRunEvent {
+  id: string
+  attemptId: string | null
+  actorId: string | null
+  kind: string
+  fromStatus: TaskRunStatus | null
+  toStatus: TaskRunStatus | null
+  revision: number
+  data: Record<string, unknown>
+  createdAt: string
+}
+
+export interface ApiTaskRunDetail extends ApiTaskRun {
+  sourceMessage: {
+    id: string
+    sequence: number
+    authorId: string
+    body: string
+  } | null
+  sourceAvailable: boolean
+  attempts: ApiTaskRunAttempt[]
+  events: ApiTaskRunEvent[]
+  idempotentReplay?: boolean
+}
+
+export type ApiTaskRunAction =
+  | 'pause' | 'resume' | 'cancel' | 'approve' | 'retry'
+  | 'wait_user' | 'block' | 'unblock' | 'fail' | 'complete'
 
 export interface ApiConversation {
   id: string
@@ -1016,7 +1079,46 @@ export const api = {
   getReplies: (conversationId: string, rootId: string) =>
     http<ApiMessage[]>(
       `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(rootId)}/replies`,
-    ),
+  ),
+  listTaskRuns: (opts?: {
+    conversationId?: string
+    status?: TaskRunStatus[]
+    limit?: number
+  }) => {
+    const qs = new URLSearchParams()
+    if (opts?.conversationId) qs.set('conversationId', opts.conversationId)
+    if (opts?.status?.length) qs.set('status', opts.status.join(','))
+    if (opts?.limit !== undefined) qs.set('limit', String(opts.limit))
+    const q = qs.toString()
+    return http<ApiTaskRun[]>(`/task-runs${q ? `?${q}` : ''}`)
+  },
+  getTaskRun: (id: string) =>
+    http<ApiTaskRunDetail>(`/task-runs/${encodeURIComponent(id)}`),
+  createTaskRun: (input: {
+    title: string
+    conversationId: string
+    sourceMessageId?: string | null
+    assigneeId?: string | null
+    summary?: string
+    consequence?: string
+    metadata?: Record<string, unknown>
+  }) => http<ApiTaskRunDetail>('/task-runs', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  actOnTaskRun: (id: string, input: {
+    action: ApiTaskRunAction
+    expectedRevision: number
+    idempotencyKey: string
+    nextActorId?: string | null
+    reason?: string
+    summary?: string
+    consequence?: string
+    result?: Record<string, unknown>
+  }) => http<ApiTaskRunDetail>(`/task-runs/${encodeURIComponent(id)}/actions`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
   sendMessage: (
     conversationId: string,
     body: string,
@@ -1425,6 +1527,16 @@ export type WsEvent =
   | { type: 'message.reactions'; conversationId: string; messageId: string; reactions: Array<{ emoji: string; count: number; mine?: boolean; users?: string[] }> }
   | { type: 'group.pulled'; conversationId: string; pulledById: string }
   | { type: 'conversation.updated'; conversationId: string; patch: { topic?: string | null; title?: string } }
+  | {
+      type: 'task-run.changed'
+      runId: string
+      conversationId: string | null
+      revision: number
+      status: TaskRunStatus
+      kind: string
+      actorId: string
+      eventId?: string
+    }
   | { type: 'convene'; sessionId: string; conversationId: string; kind: 'started' | 'transcript' | 'ended' | 'tile'; data?: unknown }
   | { type: 'board.changed'; kind:
         | 'board.created' | 'board.updated' | 'board.deleted'

@@ -7,6 +7,7 @@ import { bootParticipants, useParticipants } from '@/stores/participants'
 import { bootConversations, isMuted, useConversations } from '@/stores/conversations'
 import { bootWhispers, useWhispers } from '@/stores/whispers'
 import { bootComputers, useComputers } from '@/stores/computers'
+import { bootTaskRuns, useTaskRuns } from '@/stores/task-runs'
 import { Onboarding } from '@/desktop/Onboarding'
 import { usePrefs } from '@/stores/preferences'
 import { api } from '@/api/client'
@@ -118,6 +119,7 @@ function AuthedApp() {
     bootConversations()
     bootWhispers()
     bootComputers()
+    bootTaskRuns()
     void usePrefs.getState().load()
   }, [])
 
@@ -133,6 +135,7 @@ function AuthedApp() {
   useEffect(() => {
     if (!convoId || !selectedConvoExists) return
     void useMessages.getState().loadConversation(convoId)
+    void useTaskRuns.getState().loadConversation(convoId)
     void api.markRead(convoId).then(() => {
       // refresh list so the badge clears
       void useConversations.getState().reload()
