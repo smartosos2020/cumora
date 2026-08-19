@@ -10,7 +10,9 @@ import {
 import {
   mergeTaskRunCache,
   mergeTaskRunConversationCache,
+  mergeTaskRunDetailCache,
   orderedTaskRunIds,
+  TrailingRefreshQueue,
 } from '@/stores/task-run-cache'
 
 interface TaskRunsState {
@@ -37,6 +39,7 @@ interface TaskRunsState {
 // reset prevents a request started in workspace A from writing its response
 // into workspace B after a fast company switch.
 let taskRunsEpoch = 0
+const loadAllRefreshQueue = new TrailingRefreshQueue<number>()
 
 export const useTaskRuns = create<TaskRunsState>((set, get) => ({
   byId: {},
@@ -63,34 +66,38 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
   loadAll: async () => {
     const epoch = taskRunsEpoch
     const key = 'all'
-    if (get().loading.has(key)) return
-    set((state) => ({ loading: new Set(state.loading).add(key) }))
-    try {
-      const runs = await api.listTaskRuns({ limit: 250 })
-      if (epoch !== taskRunsEpoch) return
-      set((state) => {
-        const byId = mergeTaskRunCache(state.byId, runs)
-        return {
-          byId,
-          allIds: orderedTaskRunIds(byId),
-          loadedAll: true,
-          errors: { ...state.errors, [key]: '' },
-        }
-      })
-    } catch (error) {
-      if (epoch !== taskRunsEpoch) return
-      set((state) => ({
-        errors: { ...state.errors, [key]: error instanceof Error ? error.message : String(error) },
-      }))
-    } finally {
-      if (epoch === taskRunsEpoch) {
+    await loadAllRefreshQueue.run(epoch, async () => {
+      // A hello received during the initial reconciliation represents new
+      // information: Redis may have dropped events before the socket came up.
+      // The queue coalesces overlapping refreshes into one trailing REST call.
+      set((state) => ({ loading: new Set(state.loading).add(key) }))
+      try {
+        const runs = await api.listTaskRuns({ limit: 250 })
+        if (epoch !== taskRunsEpoch) return
         set((state) => {
-          const loading = new Set(state.loading)
-          loading.delete(key)
-          return { loading }
+          const byId = mergeTaskRunCache(state.byId, runs)
+          return {
+            byId,
+            allIds: orderedTaskRunIds(byId),
+            loadedAll: true,
+            errors: { ...state.errors, [key]: '' },
+          }
         })
+      } catch (error) {
+        if (epoch !== taskRunsEpoch) return
+        set((state) => ({
+          errors: { ...state.errors, [key]: error instanceof Error ? error.message : String(error) },
+        }))
+      } finally {
+        if (epoch === taskRunsEpoch) {
+          set((state) => {
+            const loading = new Set(state.loading)
+            loading.delete(key)
+            return { loading }
+          })
+        }
       }
-    }
+    }, () => epoch === taskRunsEpoch)
   },
 
   loadConversation: async (conversationId) => {
@@ -147,15 +154,14 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
     if (epoch !== taskRunsEpoch) throw new Error('Task Run workspace changed')
     set((state) => {
       const existing = state.byId[id]
-      if (existing && existing.revision > detail.revision) return {}
       const byId = mergeTaskRunCache(state.byId, [detail])
       return {
         byId,
-        details: { ...state.details, [id]: detail },
+        details: mergeTaskRunDetailCache(state.details, detail, existing?.revision),
         allIds: orderedTaskRunIds(byId),
       }
     })
-    return detail
+    return get().details[id] ?? detail
   },
 
   act: async (id, input) => {
@@ -163,14 +169,15 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
     const detail = await api.actOnTaskRun(id, input)
     if (epoch !== taskRunsEpoch) throw new Error('Task Run workspace changed')
     set((state) => {
+      const existing = state.byId[id]
       const byId = mergeTaskRunCache(state.byId, [detail])
       return {
         byId,
-        details: { ...state.details, [id]: detail },
+        details: mergeTaskRunDetailCache(state.details, detail, existing?.revision),
         allIds: orderedTaskRunIds(byId),
       }
     })
-    return detail
+    return get().details[id] ?? detail
   },
 
   applyEvent: (event) => {
