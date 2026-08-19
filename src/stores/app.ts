@@ -76,6 +76,17 @@ interface AppState {
   closeCalendarEventPeek: () => void
 
   /**
+   * Task Runs use the conversation right rail too. `list` shows the runs for
+   * the currently selected chat; `{ runId }` is the canonical detail page.
+   * Keeping both surfaces in one field makes transitions atomic and prevents
+   * a stale detail pane from surviving a conversation switch.
+   */
+  taskRunPane: 'list' | { runId: string } | null
+  openTaskRuns: () => void
+  openTaskRunDetail: (runId: string) => void
+  closeTaskRuns: () => void
+
+  /**
    * Email composer state — when set, an overlay drawer is rendered on top
    * of the chat pane. `mode='new'` is a fresh thread; `mode='reply'` is
    * pre-filled from an existing email message (the server derives subject
@@ -96,7 +107,11 @@ export const useApp = create<AppState>((set) => ({
   // server. Seeding with a mock id here used to fire a 404 messages fetch
   // before the user picked anything.
   selectedConversationId: null,
-  selectConversation: (id) => set({ selectedConversationId: id, mobileStack: id ? 'chat' : 'list' }),
+  selectConversation: (id) => set((s) => ({
+    selectedConversationId: id,
+    mobileStack: id ? 'chat' : 'list',
+    taskRunPane: s.taskRunPane ? 'list' : null,
+  })),
   setSelectedIfNone: (id) => set((s) => s.selectedConversationId ? {} : { selectedConversationId: id }),
 
   mobileStack: 'list',
@@ -107,7 +122,7 @@ export const useApp = create<AppState>((set) => ({
   // slot in DesktopApp. Keeping both states in sync here means the UI never
   // sees both flags on at once.
   openAgentInfo: (agentId) =>
-    set({ infoAgentId: agentId, openThread: null, openDocumentId: null, openBoardId: null, openBoardCardId: null, openCalendarEventId: null }),
+    set({ infoAgentId: agentId, openThread: null, openDocumentId: null, openBoardId: null, openBoardCardId: null, openCalendarEventId: null, taskRunPane: null }),
   closeAgentInfo: () => set({ infoAgentId: null }),
 
   replyingTo: {},
@@ -134,22 +149,29 @@ export const useApp = create<AppState>((set) => ({
 
   openThread: null,
   openThreadView: (convoId, rootId) =>
-    set({ openThread: { convoId, rootId }, infoAgentId: null, openDocumentId: null, openBoardId: null, openBoardCardId: null, openCalendarEventId: null }),
+    set({ openThread: { convoId, rootId }, infoAgentId: null, openDocumentId: null, openBoardId: null, openBoardCardId: null, openCalendarEventId: null, taskRunPane: null }),
   closeThreadView: () => set({ openThread: null }),
 
   openDocumentId: null,
   openDocumentPeek: (documentId) =>
-    set({ openDocumentId: documentId, openBoardId: null, openBoardCardId: null, openCalendarEventId: null, openThread: null, infoAgentId: null }),
+    set({ openDocumentId: documentId, openBoardId: null, openBoardCardId: null, openCalendarEventId: null, openThread: null, infoAgentId: null, taskRunPane: null }),
   closeDocumentPeek: () => set({ openDocumentId: null }),
   openBoardId: null,
   openBoardCardId: null,
   openBoardPeek: (boardId, cardId = null) =>
-    set({ openBoardId: boardId, openBoardCardId: cardId, openDocumentId: null, openCalendarEventId: null, openThread: null, infoAgentId: null }),
+    set({ openBoardId: boardId, openBoardCardId: cardId, openDocumentId: null, openCalendarEventId: null, openThread: null, infoAgentId: null, taskRunPane: null }),
   closeBoardPeek: () => set({ openBoardId: null, openBoardCardId: null }),
   openCalendarEventId: null,
   openCalendarEventPeek: (eventId) =>
-    set({ openCalendarEventId: eventId, openDocumentId: null, openBoardId: null, openBoardCardId: null, openThread: null, infoAgentId: null }),
+    set({ openCalendarEventId: eventId, openDocumentId: null, openBoardId: null, openBoardCardId: null, openThread: null, infoAgentId: null, taskRunPane: null }),
   closeCalendarEventPeek: () => set({ openCalendarEventId: null }),
+
+  taskRunPane: null,
+  openTaskRuns: () =>
+    set({ taskRunPane: 'list', openCalendarEventId: null, openDocumentId: null, openBoardId: null, openBoardCardId: null, openThread: null, infoAgentId: null }),
+  openTaskRunDetail: (runId) =>
+    set({ taskRunPane: { runId }, openCalendarEventId: null, openDocumentId: null, openBoardId: null, openBoardCardId: null, openThread: null, infoAgentId: null }),
+  closeTaskRuns: () => set({ taskRunPane: null }),
 
   composeEmail: null,
   openComposeNew: () => set({ composeEmail: { mode: 'new' } }),

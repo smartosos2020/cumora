@@ -1,27 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import { type ApiAttachment, api } from '@/api/client'
+import { Avatar, AvatarStack } from '@/components/Avatar'
+import { IAt, IClip, IConvene, IPin, ISearch, ISend, ISmile } from '@/components/icons'
+import { MembersPopover } from '@/components/MembersPopover'
+import { MessageRow, TypingRow } from '@/components/Message'
+import { PollComposer } from '@/components/PollComposer'
+import { PreviewText } from '@/components/PreviewText'
+import { RichInput, type RichInputHandle } from '@/components/RichInput'
+import { ScrollToLatestButton } from '@/components/ScrollToLatestButton'
+import { SkypeEmoji } from '@/components/SkypeEmoji'
+import { TwEmoji } from '@/components/TwEmoji'
+import { COMPOSER_EMOJIS } from '@/lib/emoji'
+import { isImeComposing } from '@/lib/keyboard'
+import { findSkypeByShortcode, playSkypeSound, SKYPE_EMOJIS } from '@/lib/skypeEmojis'
+import { cn } from '@/lib/utils'
 import { useApp } from '@/stores/app'
 import { useMe } from '@/stores/auth'
 import { useConversations } from '@/stores/conversations'
-import { useParticipants } from '@/stores/participants'
-import { useMessages, sendUserMessage, messagesFor, VIRTUOSO_FIRST_INDEX_BASE } from '@/stores/messages'
 import type { MessagesState } from '@/stores/messages'
-import { api, type ApiAttachment } from '@/api/client'
-import { Avatar, AvatarStack } from '@/components/Avatar'
-import { MembersPopover } from '@/components/MembersPopover'
-import { PreviewText } from '@/components/PreviewText'
-import { RichInput, type RichInputHandle } from '@/components/RichInput'
-import { SkypeEmoji } from '@/components/SkypeEmoji'
-import { findSkypeByShortcode, playSkypeSound, SKYPE_EMOJIS } from '@/lib/skypeEmojis'
+import { messagesFor, sendUserMessage, useMessages, VIRTUOSO_FIRST_INDEX_BASE } from '@/stores/messages'
+import { useParticipants } from '@/stores/participants'
 import { useSoundStore } from '@/stores/sound'
-import { TwEmoji } from '@/components/TwEmoji'
-import { cn } from '@/lib/utils'
-import { COMPOSER_EMOJIS } from '@/lib/emoji'
-import { isImeComposing } from '@/lib/keyboard'
-import { MessageRow, TypingRow } from '@/components/Message'
-import { PollComposer } from '@/components/PollComposer'
-import { ScrollToLatestButton } from '@/components/ScrollToLatestButton'
-import { ISearch, IPin, IClip, IAt, ISmile, ISend, IConvene } from '@/components/icons'
+import { useTaskRuns } from '@/stores/task-runs'
 import type { Participant } from '@/types'
 
 /** Soft "Coming soon" popover anchored beneath the trigger. Auto-dismisses
@@ -107,6 +108,19 @@ function ChatHeader({
   const [membersAnchor, setMembersAnchor] = useState<DOMRect | null>(null)
   const [showConveneSoon, setShowConveneSoon] = useState(false)
   const memberStackRef = useRef<HTMLButtonElement>(null)
+  const taskRunPane = useApp((s) => s.taskRunPane)
+  const openTaskRuns = useApp((s) => s.openTaskRuns)
+  const closeTaskRuns = useApp((s) => s.closeTaskRuns)
+  const taskRunCount = useTaskRuns((s) => s.allIds.reduce(
+    (count, id) => count + (s.byId[id]?.conversationId === convoId ? 1 : 0),
+    0,
+  ))
+  const waitingTaskRunCount = useTaskRuns((s) => s.allIds.reduce(
+    (count, id) => count + (
+      s.byId[id]?.conversationId === convoId && s.byId[id]?.status === 'waiting_user' ? 1 : 0
+    ),
+    0,
+  ))
 
   useEffect(() => {
     setMembersAnchor(null)
@@ -299,6 +313,26 @@ function ChatHeader({
           + Pin drop off but Convene stays full-text — it's the primary
           action in this header. */}
       <div className="flex gap-1 text-ink-500 shrink-0">
+        <button
+          type="button"
+          onClick={taskRunPane ? closeTaskRuns : openTaskRuns}
+          title="Task Runs in this conversation"
+          aria-label="Task Runs in this conversation"
+          aria-pressed={taskRunPane ? true : undefined}
+          className={cn(
+            'relative h-9 rounded-[9px] px-2.5 inline-flex items-center gap-1.5 text-[11.5px] font-semibold transition',
+            taskRunPane ? 'bg-sky2-100 text-skype-deep' : 'hover:bg-sky2-50 hover:text-skype-deep',
+          )}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-[17px] w-[17px]" aria-hidden><path d="M8 6h12M8 12h12M8 18h12"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+          <span className="hidden xl:inline">Runs</span>
+          {taskRunCount > 0 && (
+            <span className={cn(
+              'min-w-[17px] rounded-full px-1 text-center text-[9.5px] leading-[17px]',
+              waitingTaskRunCount > 0 ? 'bg-gold text-ink-900' : 'bg-ink-100 text-ink-500',
+            )}>{waitingTaskRunCount || taskRunCount}</span>
+          )}
+        </button>
         <button
           onClick={onToggleSearch}
           title="Search in this conversation"
