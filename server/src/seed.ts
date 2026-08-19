@@ -147,8 +147,9 @@ export async function seedIfEmpty(): Promise<void> {
 
     for (const c of SEED_CONVOS) {
       await client.query(
-        `INSERT INTO conversations (id, kind, title, subtitle, members, pinned, tag, pulled_by, project_id)
-         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb,$9)`,
+        `INSERT INTO conversations
+          (id, kind, title, subtitle, members, pinned, tag, pulled_by, project_id, company_id)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb,$9,'personal')`,
         [c.id, c.kind, c.title, c.subtitle ?? null, JSON.stringify(c.members), c.pinned ?? false, c.tag ?? null, c.pulledBy ? JSON.stringify(c.pulledBy) : null, c.projectId ?? null],
       )
       const maxSeq = SEED_MESSAGES.filter((m) => m.conversationId === c.id).reduce((a, b) => Math.max(a, b.sequence), 0)
