@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { after, before, beforeEach, test } from 'node:test'
+import WebSocket from 'ws'
 import { pool } from '../db/pool.js'
 import {
   CH_TASK_RUNS,
   sub,
   type TaskRunChangedEvent,
 } from '../redis.js'
+import { attachWebSocket } from '../ws.js'
 import {
   buildApiTestApp,
   ensureSchemaOnce,
@@ -32,7 +34,9 @@ before(async () => {
   })
   const app = await buildApiTestApp(ME)
   await new Promise<void>((resolve) => {
-    server = createServer(app).listen(0, () => {
+    server = createServer(app)
+    attachWebSocket(server)
+    server.listen(0, () => {
       const address = server.address()
       if (address && typeof address === 'object') baseUrl = `http://127.0.0.1:${address.port}`
       resolve()
@@ -74,7 +78,43 @@ async function waitForEvents(count: number): Promise<void> {
   assert.equal(events.length, count)
 }
 
-test('[integration] committed Task Run events publish once in revision order; replay stays silent', async () => {
+async function openTaskRunSocket(): Promise<{
+  socket: WebSocket
+  frames: TaskRunChangedEvent[]
+}> {
+  const ticketResponse = await fetch(`${baseUrl}/api/auth/ws-ticket`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-company-id': COMPANY },
+  })
+  assert.equal(ticketResponse.status, 200)
+  const { ticket } = await ticketResponse.json() as { ticket: string }
+  const frames: TaskRunChangedEvent[] = []
+  const socket = new WebSocket(`${baseUrl.replace(/^http/, 'ws')}/ws?t=${encodeURIComponent(ticket)}`)
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('WebSocket hello timed out')), 2_000)
+    socket.on('message', (raw) => {
+      const frame = JSON.parse(raw.toString()) as { type: string }
+      if (frame.type === 'task-run.changed') frames.push(frame as TaskRunChangedEvent)
+      if (frame.type === 'hello') {
+        clearTimeout(timeout)
+        resolve()
+      }
+    })
+    socket.on('error', reject)
+  })
+  return { socket, frames }
+}
+
+async function waitForFrames(frames: TaskRunChangedEvent[], count: number): Promise<void> {
+  const deadline = Date.now() + 2_000
+  while (frames.length < count && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.equal(frames.length, count)
+}
+
+test('[integration] committed Task Run changes reach WebSocket once in revision order; replay stays silent', async () => {
+  const { socket, frames } = await openTaskRunSocket()
   const createResponse = await fetch(`${baseUrl}/api/task-runs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-company-id': COMPANY },
@@ -124,6 +164,7 @@ test('[integration] committed Task Run events publish once in revision order; re
   assert.equal(chatResponse.status, 202)
   const chat = await chatResponse.json() as { taskRun: { id: string } }
   await waitForEvents(3)
+  await waitForFrames(frames, 3)
 
   const detailResponse = await fetch(`${baseUrl}/api/task-runs/${created.id}`, {
     headers: { 'x-company-id': COMPANY },
@@ -179,4 +220,21 @@ test('[integration] committed Task Run events publish once in revision order; re
     },
   ])
   assert.equal(replay.revision, 2)
+  assert.deepEqual(frames.map((event) => ({
+    runId: event.runId,
+    revision: event.revision,
+    status: event.status,
+    kind: event.kind,
+  })), [
+    { runId: created.id, revision: 1, status: 'running', kind: 'run.created' },
+    { runId: created.id, revision: 2, status: 'waiting_user', kind: 'action.wait_user' },
+    { runId: chat.taskRun.id, revision: 1, status: 'running', kind: 'run.created' },
+  ])
+  await new Promise<void>((resolve) => {
+    socket.once('close', () => resolve())
+    socket.close()
+  })
+  // The WS close handler releases presence asynchronously; let that write
+  // finish before the suite tears down its shared PostgreSQL pool.
+  await new Promise((resolve) => setTimeout(resolve, 50))
 })
