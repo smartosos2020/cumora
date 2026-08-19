@@ -14,8 +14,8 @@
  * subsume).
  */
 import { createHmac, randomUUID } from 'node:crypto'
-import { pool } from '../db/pool.js'
 import { ensureSchema } from '../db/migrate.js'
+import { pool } from '../db/pool.js'
 import { env } from '../env.js'
 
 let schemaReady: Promise<void> | null = null
@@ -31,6 +31,9 @@ export function ensureSchemaOnce(): Promise<void> {
  *  constraints; CASCADE on the parents handles it but listing explicitly
  *  keeps the intent visible + lets us spot-check leakage. */
 const TABLES_TO_WIPE: readonly string[] = [
+  'task_run_events',
+  'task_run_attempts',
+  'task_runs',
   'shipping_events',
   'shipping_regressions',
   'shipping_friction_reports',
