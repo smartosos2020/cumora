@@ -7,7 +7,11 @@ import {
   type WsEvent,
   ws,
 } from '@/api/client'
-import { mergeTaskRunCache, orderedTaskRunIds } from '@/stores/task-run-cache'
+import {
+  mergeTaskRunCache,
+  mergeTaskRunConversationCache,
+  orderedTaskRunIds,
+} from '@/stores/task-run-cache'
 
 interface TaskRunsState {
   byId: Record<string, ApiTaskRun>
@@ -93,18 +97,24 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
     const epoch = taskRunsEpoch
     const key = `conversation:${conversationId}`
     if (get().loading.has(key)) return
+    const idsAtRequestStart = new Set(Object.values(get().byId)
+      .filter((run) => run.conversationId === conversationId)
+      .map((run) => run.id))
     set((state) => ({ loading: new Set(state.loading).add(key) }))
     try {
       const runs = await api.listTaskRuns({ conversationId, limit: 250 })
       if (epoch !== taskRunsEpoch) return
       set((state) => {
-        // A successful scoped read is authoritative for this conversation:
-        // remove cached rows no longer returned, while retaining other rooms.
-        const received = new Set(runs.map((run) => run.id))
-        const retained = Object.fromEntries(Object.entries(state.byId).filter(
-          ([id, run]) => run.conversationId !== conversationId || received.has(id),
-        ))
-        const byId = mergeTaskRunCache(retained, runs)
+        // Remove rows that disappeared from this scoped snapshot, but only if
+        // they were already present when the request began. A Run arriving by
+        // WS while this REST request was in flight must survive a stale response
+        // that naturally does not contain it yet.
+        const byId = mergeTaskRunConversationCache(
+          state.byId,
+          runs,
+          conversationId,
+          idsAtRequestStart,
+        )
         const loadedConversations = new Set(state.loadedConversations).add(conversationId)
         return {
           byId,

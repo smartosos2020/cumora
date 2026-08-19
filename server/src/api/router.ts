@@ -1,43 +1,48 @@
-import { Router, type Request, type Response, type NextFunction } from 'express'
-import { storage, UPLOAD_DIR, freshenAttachmentUrl, normalizeStorageKey, storageKeyFromPublicUrl } from '../storage.js'
-import { pool } from '../db/pool.js'
-import { CH_MESSAGE_NEW, CH_REACTIONS, CH_CONVO_UPDATED, CH_DOCS, CH_TYPING, CH_CALENDAR_EVENTS, CH_TASK_RUNS, publish } from '../redis.js'
-import { createPoll, castVote, closePoll, PollError } from '../polls.js'
-import { env } from '../env.js'
-import { startConvene, getActiveConvene } from '../agents/convene.js'
-import { getTriageEconomics } from '../agents/observability.js'
-import { BUSY_STATUS_LEASE_MS } from '../status.js'
-import { notifyMessage, computeMessageRecipients } from '../push.js'
-import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto'
-import {
-  deleteSession, authMiddleware, type AuthedRequest,
-  audit, createWsTicket, gravatarUrlForEmail,
-} from '../auth.js'
-import { joinAllHands, onboardStarterAgents, seedMemberDms } from '../onboardCompany.js'
-import {
-  type Provider, providerEnabled, createState, consumeState,
-  authorizeUrl, handleCallback, errorUrl, returnUrlAllowed,
-} from '../oauth.js'
-import { adminRouter } from './admin-router.js'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { type NextFunction, type Request, type Response, Router } from 'express'
 import { isWaitlistEnabled } from '../admin.js'
-import { ogPreview, OgError } from '../og.js'
-import { sendInvitationEmail, type InvitationEmailDelivery } from '../invitation-email.js'
-import { getUserQuota, sub2apiConfigured } from '../sub2api.js'
 import {
-  ensureCloudComputer, issuePairingCode, pairComputer, announceComputerOnline,
-  resolveDevice, mintAgentRuntimeToken, listAgentsForComputer,
-  listComputers, revokeComputer, assignAgentToComputer, heartbeatComputer,
-  cloudComputerId, issueRepairCode,
+  announceComputerOnline, assignAgentToComputer, cloudComputerId,
+  ensureCloudComputer, heartbeatComputer, issuePairingCode, issueRepairCode,
+  listAgentsForComputer, listComputers, mintAgentRuntimeToken, pairComputer,
+  resolveDevice, revokeComputer,
 } from '../agents/computer/registry.js'
-import { companyTier } from '../tier.js'
-import { createShippingRouter } from './shipping-router.js'
-import { createTaskRunRouter } from './task-run-router.js'
+import { getActiveConvene, startConvene } from '../agents/convene.js'
+import { getTriageEconomics } from '../agents/observability.js'
+import {
+  type AuthedRequest, audit, authMiddleware, createWsTicket,
+  deleteSession, gravatarUrlForEmail,
+} from '../auth.js'
 import {
   assertChatTaskRunAssignee,
   ChatTaskRunError,
   createChatTaskRun,
   parseChatTaskRunDraft,
 } from '../chat-task-run.js'
+import { pool } from '../db/pool.js'
+import { env } from '../env.js'
+import { type InvitationEmailDelivery, sendInvitationEmail } from '../invitation-email.js'
+import {
+  authorizeUrl, consumeState, createState, errorUrl, handleCallback,
+  type Provider, providerEnabled, returnUrlAllowed,
+} from '../oauth.js'
+import { OgError, ogPreview } from '../og.js'
+import { joinAllHands, onboardStarterAgents, seedMemberDms } from '../onboardCompany.js'
+import { castVote, closePoll, createPoll, PollError } from '../polls.js'
+import { computeMessageRecipients, notifyMessage } from '../push.js'
+import {
+  CH_CALENDAR_EVENTS, CH_CONVO_UPDATED, CH_DOCS, CH_MESSAGE_NEW,
+  CH_REACTIONS, CH_TASK_RUNS, CH_TYPING, publish,
+} from '../redis.js'
+import { BUSY_STATUS_LEASE_MS } from '../status.js'
+import {
+  freshenAttachmentUrl, normalizeStorageKey, storage, storageKeyFromPublicUrl, UPLOAD_DIR,
+} from '../storage.js'
+import { getUserQuota, sub2apiConfigured } from '../sub2api.js'
+import { companyTier } from '../tier.js'
+import { adminRouter } from './admin-router.js'
+import { createShippingRouter } from './shipping-router.js'
+import { createTaskRunRouter } from './task-run-router.js'
 
 /** Re-export so older imports (server/index.ts, agents/cli.ts) keep working
  *  after the storage abstraction moved this constant. */

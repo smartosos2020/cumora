@@ -1,10 +1,10 @@
+import { getActiveCompanyId, getAuthToken, useAuth } from '@/stores/auth'
 import type {
-  Message, Status,
-  BoardSummary, BoardSnapshot, BoardCardComment, BoardCardLookup,
-  CalendarEvent, CalendarEventKind, CalendarEventStatus, CalendarDispatch, RecurrenceRule,
-  CalendarReminderChannel,ComputerStatus, ComputerKind, EngineId,
+  BoardCardComment, BoardCardLookup, BoardSnapshot, BoardSummary,
+  CalendarDispatch, CalendarEvent, CalendarEventKind, CalendarEventStatus,
+  CalendarReminderChannel, ComputerKind, ComputerStatus, EngineId,
+  Message, RecurrenceRule, Status,
 } from '@/types'
-import { getAuthToken, getActiveCompanyId, useAuth } from '@/stores/auth'
 import type { TaskRunStatus } from '../../shared/task-run-state'
 
 const DEVTOOLS_KEY = 'cumora.devtools.enabled'

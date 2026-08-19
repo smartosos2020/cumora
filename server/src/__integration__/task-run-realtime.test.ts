@@ -4,6 +4,7 @@ import { after, before, beforeEach, test } from 'node:test'
 import WebSocket from 'ws'
 import {
   mergeTaskRunCache,
+  mergeTaskRunConversationCache,
   type TaskRunCacheEntry,
 } from '../../../src/stores/task-run-cache.js'
 import { pool } from '../db/pool.js'
@@ -21,7 +22,7 @@ import {
   teardownAll,
 } from './_helpers.js'
 
-type TestTaskRun = TaskRunCacheEntry & { status: string }
+type TestTaskRun = TaskRunCacheEntry & { status: string; conversationId: string | null }
 
 const ME = 'u-task-run-realtime'
 const AGENT = 'a-task-run-realtime'
@@ -214,6 +215,26 @@ test('[integration] committed Task Run changes reach WebSocket once in revision 
   storeById = mergeTaskRunCache(storeById, [staleSnapshot, staleSnapshot])
   assert.equal(storeById[created.id].revision, 2)
   assert.equal(storeById[created.id].status, 'waiting_user')
+
+  // Reproduce the scoped-list race: REST starts when only the first Run is in
+  // cache; a second Run arrives over WS; the older scoped response omits it.
+  // Conversation reconciliation must keep the post-request WS entity and must
+  // not downgrade the original entity with its stale revision.
+  const idsAtScopedRequestStart = new Set([created.id])
+  const chatSnapshot = storeById[chat.taskRun.id]
+  const cacheAfterWs = mergeTaskRunCache(
+    { [created.id]: storeById[created.id] },
+    [chatSnapshot],
+  )
+  const afterStaleScopedRest = mergeTaskRunConversationCache(
+    cacheAfterWs,
+    [staleSnapshot],
+    CONVO,
+    idsAtScopedRequestStart,
+  )
+  assert.equal(Object.keys(afterStaleScopedRest).length, 2)
+  assert.equal(afterStaleScopedRest[created.id].revision, 2)
+  assert.equal(afterStaleScopedRest[chat.taskRun.id].revision, 1)
 
   assert.deepEqual(events.map((event) => ({
     type: event.type,
