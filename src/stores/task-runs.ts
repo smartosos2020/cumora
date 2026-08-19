@@ -79,12 +79,13 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
         errors: { ...state.errors, [key]: error instanceof Error ? error.message : String(error) },
       }))
     } finally {
-      if (epoch !== taskRunsEpoch) return
-      set((state) => {
-        const loading = new Set(state.loading)
-        loading.delete(key)
-        return { loading }
-      })
+      if (epoch === taskRunsEpoch) {
+        set((state) => {
+          const loading = new Set(state.loading)
+          loading.delete(key)
+          return { loading }
+        })
+      }
     }
   },
 
@@ -118,12 +119,13 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
         errors: { ...state.errors, [key]: error instanceof Error ? error.message : String(error) },
       }))
     } finally {
-      if (epoch !== taskRunsEpoch) return
-      set((state) => {
-        const loading = new Set(state.loading)
-        loading.delete(key)
-        return { loading }
-      })
+      if (epoch === taskRunsEpoch) {
+        set((state) => {
+          const loading = new Set(state.loading)
+          loading.delete(key)
+          return { loading }
+        })
+      }
     }
   },
 

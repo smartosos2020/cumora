@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { after, before, beforeEach, test } from 'node:test'
 import WebSocket from 'ws'
+import {
+  mergeTaskRunCache,
+  type TaskRunCacheEntry,
+} from '../../../src/stores/task-run-cache.js'
 import { pool } from '../db/pool.js'
 import {
   CH_TASK_RUNS,
@@ -10,18 +14,14 @@ import {
 } from '../redis.js'
 import { attachWebSocket } from '../ws.js'
 import {
-  mergeTaskRunCache,
-  type TaskRunCacheEntry,
-} from '../../../src/stores/task-run-cache.js'
-
-type TestTaskRun = TaskRunCacheEntry & { status: string }
-import {
   buildApiTestApp,
   ensureSchemaOnce,
   resetAllTables,
   seedUserMembership,
   teardownAll,
 } from './_helpers.js'
+
+type TestTaskRun = TaskRunCacheEntry & { status: string }
 
 const ME = 'u-task-run-realtime'
 const AGENT = 'a-task-run-realtime'
