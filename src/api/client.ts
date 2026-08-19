@@ -374,6 +374,16 @@ export interface ApiAttachment {
   key?: string
 }
 
+/** Optional envelope that turns one chat message into the source of a Task Run.
+ * The server commits the message and Run atomically. */
+export interface ApiChatTaskRunDraft {
+  assigneeId: string
+  title?: string
+  summary?: string
+  consequence?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface UploadCapabilities {
   mode: 'local' | 'r2'
   presignSupported: boolean
@@ -1129,14 +1139,16 @@ export const api = {
      *  echo to its still-temp local bubble even when the WS event arrives
      *  before this POST resolves. */
     clientId?: string | null,
+    taskRun?: ApiChatTaskRunDraft | null,
   ) =>
-    http<{ id: string; sequence: number }>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    http<{ id: string; sequence: number; taskRun?: { id: string; revision: number } }>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
       method: 'POST',
       body: JSON.stringify({
         body,
         attachment: attachment ?? undefined,
         quotedMessageId: quotedMessageId ?? undefined,
         clientId: clientId ?? undefined,
+        taskRun: taskRun ?? undefined,
       }),
     }),
   /* ============== Polls ====================================================

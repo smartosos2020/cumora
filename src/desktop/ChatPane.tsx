@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { type ApiAttachment, api } from '@/api/client'
 import { Avatar, AvatarStack } from '@/components/Avatar'
-import { IAt, IClip, IConvene, IPin, ISearch, ISend, ISmile } from '@/components/icons'
+import { IAt, IClip, IConvene, IPin, ISearch, ISend, ISmile, ITasks } from '@/components/icons'
 import { MembersPopover } from '@/components/MembersPopover'
 import { MessageRow, TypingRow } from '@/components/Message'
 import { PollComposer } from '@/components/PollComposer'
@@ -698,6 +698,17 @@ export function Composer({
       .map((id) => byId[id])
       .filter((p): p is Participant => Boolean(p) && p.id !== meId)
   }, [conversation, byId, meId])
+  const agentPool = useMemo(
+    () => memberPool.filter((participant) => participant.kind === 'agent' && !participant.departedAt),
+    [memberPool],
+  )
+  const [taskRunPickerOpen, setTaskRunPickerOpen] = useState(false)
+  const [taskRunAssigneeId, setTaskRunAssigneeId] = useState<string | null>(null)
+  const taskRunAssignee = taskRunAssigneeId ? byId[taskRunAssigneeId] : undefined
+  useEffect(() => {
+    setTaskRunPickerOpen(false)
+    setTaskRunAssigneeId(null)
+  }, [convoId, isThread])
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null)
   const [mentionIndex, setMentionIndex] = useState(0)
   // Picker shows the broadcast token `@all` alongside individual members.
@@ -885,7 +896,18 @@ export function Composer({
       keywords: ['poll', 'vote', '投票', 'p'],
       run: () => openPollComposer(),
     },
-  ], [openPollComposer])
+    ...(!isThread && agentPool.length > 0 ? [{
+      id: 'task',
+      label: 'Task Run',
+      hint: '把这条消息交办给 agent，并持续跟踪执行状态',
+      keywords: ['task', 'run', 'assign', '交办', '任务'],
+      run: () => {
+        setTaskRunPickerOpen(true)
+        clearComposerDraft()
+        editorRef.current?.setValue('')
+      },
+    }] : []),
+  ], [agentPool.length, clearComposerDraft, isThread, openPollComposer])
 
   const filteredSlashCommands = useMemo(() => {
     if (!slashOpen) return [] as SlashCommand[]
@@ -929,10 +951,24 @@ export function Composer({
       return
     }
     if (!v && !attachment) return
+    if (taskRunPickerOpen && !v) return
+    if (taskRunPickerOpen && !taskRunAssigneeId) return
     finalizeTyping()
-    sendUserMessage(convoId, v, attachment, replyingToId ?? null)
+    sendUserMessage(
+      convoId,
+      v,
+      attachment,
+      replyingToId ?? null,
+      taskRunAssigneeId ? {
+        assigneeId: taskRunAssigneeId,
+        title: v,
+        metadata: { source: 'composer' },
+      } : null,
+    )
     clearComposerDraft()
     editorRef.current?.setValue('')
+    setTaskRunPickerOpen(false)
+    setTaskRunAssigneeId(null)
     if (!isThread) setReplyingTo(convoId, null)
     editorRef.current?.focus()
   }
@@ -1022,7 +1058,9 @@ export function Composer({
     requestAnimationFrame(() => editorRef.current?.focus())
   }, [scopeKey])
 
-  const canSend = (draft.trim().length > 0 || attachment !== null) && !uploading
+  const canSend = (draft.trim().length > 0 || (!taskRunPickerOpen && attachment !== null))
+    && !uploading
+    && (!taskRunPickerOpen || Boolean(taskRunAssigneeId))
 
   return (
     <div className={isThread ? '' : 'px-[22px] pt-1.5 pb-[18px]'}
@@ -1079,6 +1117,47 @@ export function Composer({
         {uploadError && (
           <div className="mb-2 text-[11.5px] py-1 px-2 rounded-md text-coral-deep bg-coral-soft inline-block max-w-full truncate">
             {uploadError}
+          </div>
+        )}
+        {taskRunPickerOpen && !isThread && (
+          <div className="mb-2 rounded-[10px] border border-sky2-100 bg-sky2-50/70 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-skype-deep">Create Task Run</div>
+                <div className="text-[10.5px] text-ink-500">Choose an agent. Sending will create the message and Run together.</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setTaskRunPickerOpen(false); setTaskRunAssigneeId(null) }}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-500 transition hover:bg-cloud hover:text-ink-900"
+                aria-label="Cancel Task Run"
+              >×</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {agentPool.map((participant) => {
+                const selected = participant.id === taskRunAssigneeId
+                return (
+                  <button
+                    key={participant.id}
+                    type="button"
+                    onClick={() => {
+                      setTaskRunAssigneeId(participant.id)
+                      requestAnimationFrame(() => editorRef.current?.focus())
+                    }}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[11.5px] font-semibold transition',
+                      selected
+                        ? 'border-skype bg-skype text-white'
+                        : 'border-ink-100 bg-cloud text-ink-700 hover:border-sky2-300 hover:text-skype-deep',
+                    )}
+                    aria-pressed={selected}
+                  >
+                    <Avatar p={participant} size={22} ringColor={selected ? 'var(--skype)' : 'var(--cloud)'} showStatus={false} />
+                    {participant.name}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
         {showReplyingPill && (
@@ -1278,6 +1357,26 @@ export function Composer({
               />
             )}
           </div>
+          {!isThread && agentPool.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setTaskRunPickerOpen((open) => !open)
+                if (taskRunPickerOpen) setTaskRunAssigneeId(null)
+              }}
+              className={cn(
+                'h-7 rounded-[7px] px-2 inline-flex items-center gap-1.5 text-[11px] font-semibold transition',
+                taskRunPickerOpen
+                  ? 'bg-sky2-100 text-skype-deep'
+                  : 'hover:bg-sky2-50 hover:text-skype-deep',
+              )}
+              title="Create Task Run"
+              aria-pressed={taskRunPickerOpen}
+            >
+              <ITasks className="h-[16px] w-[16px]" />
+              {taskRunAssignee ? taskRunAssignee.name : 'Task'}
+            </button>
+          )}
           <button
             onClick={send}
             disabled={!canSend}

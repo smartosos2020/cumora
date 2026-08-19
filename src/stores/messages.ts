@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import type { Message, ReactionEntry } from '@/types'
-import { api, ws, type WsEvent, type ApiMessage } from '@/api/client'
+import { type ApiMessage, api, type WsEvent, ws } from '@/api/client'
 import { useApp } from '@/stores/app'
 import { getMeId } from '@/stores/auth'
+import type { Message, ReactionEntry } from '@/types'
 
 const EMPTY_MESSAGES: Message[] = []
 
@@ -617,6 +617,7 @@ export async function sendUserMessage(
   body: string,
   attachment?: import('@/api/client').ApiAttachment | null,
   quotedMessageId?: string | null,
+  taskRun?: import('@/api/client').ApiChatTaskRunDraft | null,
 ): Promise<void> {
   const v = body.trim()
   if (!v && !attachment) return
@@ -624,7 +625,7 @@ export async function sendUserMessage(
   // Without a signed-in user we can't paint an optimistic bubble (no authorId
   // to attribute it to). Fall back to the old fire-and-forget path.
   if (!meId) {
-    try { await api.sendMessage(convoId, v, attachment ?? null, quotedMessageId ?? null) }
+    try { await api.sendMessage(convoId, v, attachment ?? null, quotedMessageId ?? null, null, taskRun) }
     catch (err) { console.warn('[messages] send failed', err) }
     return
   }
@@ -684,7 +685,14 @@ export async function sendUserMessage(
   }))
 
   try {
-    const { id: realId } = await api.sendMessage(convoId, v, attachment ?? null, quotedMessageId ?? null, tempId)
+    const { id: realId } = await api.sendMessage(
+      convoId,
+      v,
+      attachment ?? null,
+      quotedMessageId ?? null,
+      tempId,
+      taskRun,
+    )
     // Reconcile the temp bubble with the server. Either the WS `message.new`
     // already raced ahead of us (real id already in the list → drop the temp)
     // or it hasn't (rename temp → real id so the eventual WS event dedupes
