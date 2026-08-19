@@ -10,6 +10,12 @@ import {
 } from '../redis.js'
 import { attachWebSocket } from '../ws.js'
 import {
+  mergeTaskRunCache,
+  type TaskRunCacheEntry,
+} from '../../../src/stores/task-run-cache.js'
+
+type TestTaskRun = TaskRunCacheEntry & { status: string }
+import {
   buildApiTestApp,
   ensureSchemaOnce,
   resetAllTables,
@@ -182,6 +188,33 @@ test('[integration] committed Task Run changes reach WebSocket once in revision 
     ['action.wait_user', 2],
   ])
 
+  // Feed the real REST snapshots reached from the real WS frames through the
+  // exact merge primitive used by the browser Zustand store. Multiple frames
+  // for one Run must retain one entity at the highest revision.
+  let storeById: Record<string, TestTaskRun> = {}
+  for (const frame of frames) {
+    const response = await fetch(`${baseUrl}/api/task-runs/${frame.runId}`, {
+      headers: { 'x-company-id': COMPANY },
+    })
+    assert.equal(response.status, 200)
+    storeById = mergeTaskRunCache(storeById, [await response.json() as TestTaskRun])
+  }
+  assert.equal(Object.keys(storeById).length, 2)
+  assert.equal(storeById[created.id].revision, 2)
+  assert.equal(storeById[created.id].status, 'waiting_user')
+
+  // A late revision-1 REST response and a duplicate revision-1 frame cannot
+  // move the already-hydrated revision-2 entity backwards.
+  const staleSnapshot: TestTaskRun = {
+    ...storeById[created.id],
+    revision: 1,
+    status: 'running',
+    updatedAt: new Date(0).toISOString(),
+  }
+  storeById = mergeTaskRunCache(storeById, [staleSnapshot, staleSnapshot])
+  assert.equal(storeById[created.id].revision, 2)
+  assert.equal(storeById[created.id].status, 'waiting_user')
+
   assert.deepEqual(events.map((event) => ({
     type: event.type,
     companyId: event.companyId,
@@ -237,4 +270,26 @@ test('[integration] committed Task Run changes reach WebSocket once in revision 
   // The WS close handler releases presence asynchronously; let that write
   // finish before the suite tears down its shared PostgreSQL pool.
   await new Promise((resolve) => setTimeout(resolve, 50))
+
+  // Mutate while disconnected, then emulate the store's hello/reconnect REST
+  // reconciliation. The same entity advances in place even though its WS frame
+  // was missed.
+  const resumeResponse = await fetch(`${baseUrl}/api/task-runs/${created.id}/actions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-company-id': COMPANY },
+    body: JSON.stringify({
+      action: 'approve',
+      expectedRevision: 2,
+      idempotencyKey: 'realtime-resume-after-disconnect',
+    }),
+  })
+  assert.equal(resumeResponse.status, 200)
+  const recoveryResponse = await fetch(`${baseUrl}/api/task-runs?conversationId=${CONVO}`, {
+    headers: { 'x-company-id': COMPANY },
+  })
+  assert.equal(recoveryResponse.status, 200)
+  storeById = mergeTaskRunCache(storeById, await recoveryResponse.json() as TestTaskRun[])
+  assert.equal(Object.keys(storeById).length, 2)
+  assert.equal(storeById[created.id].revision, 3)
+  assert.equal(storeById[created.id].status, 'running')
 })

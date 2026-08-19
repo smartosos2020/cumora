@@ -7,6 +7,7 @@ import {
   type WsEvent,
   ws,
 } from '@/api/client'
+import { mergeTaskRunCache, orderedTaskRunIds } from '@/stores/task-run-cache'
 
 interface TaskRunsState {
   byId: Record<string, ApiTaskRun>
@@ -32,26 +33,6 @@ interface TaskRunsState {
 // reset prevents a request started in workspace A from writing its response
 // into workspace B after a fast company switch.
 let taskRunsEpoch = 0
-
-function newestFirst(a: ApiTaskRun, b: ApiTaskRun): number {
-  return Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
-}
-
-function mergeRuns(
-  current: Record<string, ApiTaskRun>,
-  incoming: ApiTaskRun[],
-): Record<string, ApiTaskRun> {
-  const next = { ...current }
-  for (const run of incoming) {
-    const existing = next[run.id]
-    if (!existing || run.revision >= existing.revision) next[run.id] = run
-  }
-  return next
-}
-
-function orderedIds(byId: Record<string, ApiTaskRun>): string[] {
-  return Object.values(byId).sort(newestFirst).map((run) => run.id)
-}
 
 export const useTaskRuns = create<TaskRunsState>((set, get) => ({
   byId: {},
@@ -84,10 +65,10 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
       const runs = await api.listTaskRuns({ limit: 250 })
       if (epoch !== taskRunsEpoch) return
       set((state) => {
-        const byId = mergeRuns(state.byId, runs)
+        const byId = mergeTaskRunCache(state.byId, runs)
         return {
           byId,
-          allIds: orderedIds(byId),
+          allIds: orderedTaskRunIds(byId),
           loadedAll: true,
           errors: { ...state.errors, [key]: '' },
         }
@@ -122,11 +103,11 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
         const retained = Object.fromEntries(Object.entries(state.byId).filter(
           ([id, run]) => run.conversationId !== conversationId || received.has(id),
         ))
-        const byId = mergeRuns(retained, runs)
+        const byId = mergeTaskRunCache(retained, runs)
         const loadedConversations = new Set(state.loadedConversations).add(conversationId)
         return {
           byId,
-          allIds: orderedIds(byId),
+          allIds: orderedTaskRunIds(byId),
           loadedConversations,
           errors: { ...state.errors, [key]: '' },
         }
@@ -155,11 +136,11 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
     set((state) => {
       const existing = state.byId[id]
       if (existing && existing.revision > detail.revision) return {}
-      const byId = mergeRuns(state.byId, [detail])
+      const byId = mergeTaskRunCache(state.byId, [detail])
       return {
         byId,
         details: { ...state.details, [id]: detail },
-        allIds: orderedIds(byId),
+        allIds: orderedTaskRunIds(byId),
       }
     })
     return detail
@@ -170,11 +151,11 @@ export const useTaskRuns = create<TaskRunsState>((set, get) => ({
     const detail = await api.actOnTaskRun(id, input)
     if (epoch !== taskRunsEpoch) throw new Error('Task Run workspace changed')
     set((state) => {
-      const byId = mergeRuns(state.byId, [detail])
+      const byId = mergeTaskRunCache(state.byId, [detail])
       return {
         byId,
         details: { ...state.details, [id]: detail },
-        allIds: orderedIds(byId),
+        allIds: orderedTaskRunIds(byId),
       }
     })
     return detail
