@@ -31,6 +31,7 @@ import {
 } from '../agents/computer/registry.js'
 import { companyTier } from '../tier.js'
 import { createShippingRouter } from './shipping-router.js'
+import { createTaskRunRouter } from './task-run-router.js'
 
 /** Re-export so older imports (server/index.ts, agents/cli.ts) keep working
  *  after the storage abstraction moved this constant. */
@@ -6089,6 +6090,11 @@ api.post('/push/unregister', async (req, res) => {
 // tenant/role gates as the rest of this file; it never trusts company ids from
 // request bodies or URLs.
 api.use('/shipping', createShippingRouter({ pool, requireCompany, requireCompanyRole }))
+
+// User-visible execution lifecycles. Kept outside the observability
+// `/agents/*/runs` namespace because Task Runs survive scheduler attempts and
+// have their own revisioned action contract.
+api.use('/task-runs', createTaskRunRouter({ pool, requireCompany }))
 
 // Global error handler — must come after all routes. HttpError → status code.
 api.use(errorHandler)

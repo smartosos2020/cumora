@@ -1515,6 +1515,81 @@ CREATE UNIQUE INDEX IF NOT EXISTS computers_pair_token_idx ON computers(pair_tok
 -- A shipping feature is deliberately distinct from a generic board card.
 -- Cards answer "what are we doing?"; a feature contract answers "what must
 -- remain true, who independently proved it, and what happened in production?"
+-- Product-facing Task Runs. These rows model one user-visible execution
+-- lifecycle and must not be collapsed into agent_runs scheduler turns.
+CREATE TABLE IF NOT EXISTS task_runs (
+  id                 TEXT PRIMARY KEY,
+  company_id         TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  conversation_id    TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  source_message_id  TEXT,
+  created_by         TEXT NOT NULL,
+  assignee_id        TEXT,
+  next_actor_id      TEXT,
+  title              TEXT NOT NULL,
+  summary            TEXT NOT NULL DEFAULT '',
+  consequence        TEXT NOT NULL DEFAULT '',
+  status             TEXT NOT NULL DEFAULT 'running',
+  paused_from_status TEXT,
+  revision           INTEGER NOT NULL DEFAULT 1,
+  current_attempt    INTEGER NOT NULL DEFAULT 1,
+  result             JSONB,
+  metadata           JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  completed_at       TIMESTAMP WITH TIME ZONE,
+  CONSTRAINT task_runs_status_check CHECK
+    (status IN ('running','waiting_user','blocked','failed_recoverable','completed','paused','cancelled')),
+  CONSTRAINT task_runs_paused_from_check CHECK
+    (paused_from_status IS NULL OR paused_from_status IN ('running','waiting_user','blocked')),
+  CONSTRAINT task_runs_revision_check CHECK (revision >= 1),
+  CONSTRAINT task_runs_attempt_check CHECK (current_attempt >= 1)
+);
+CREATE INDEX IF NOT EXISTS idx_task_runs_company_updated
+  ON task_runs(company_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_runs_conversation_updated
+  ON task_runs(conversation_id, updated_at DESC) WHERE conversation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_task_runs_company_status
+  ON task_runs(company_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS task_run_attempts (
+  id           TEXT PRIMARY KEY,
+  run_id       TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
+  attempt_no   INTEGER NOT NULL,
+  agent_run_id TEXT,
+  status       TEXT NOT NULL DEFAULT 'running',
+  error        TEXT,
+  output       JSONB,
+  started_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  ended_at     TIMESTAMP WITH TIME ZONE,
+  CONSTRAINT task_run_attempts_status_check CHECK
+    (status IN ('running','failed','completed','cancelled')),
+  CONSTRAINT task_run_attempts_no_check CHECK (attempt_no >= 1),
+  CONSTRAINT task_run_attempts_run_no_unique UNIQUE (run_id, attempt_no)
+);
+CREATE INDEX IF NOT EXISTS idx_task_run_attempts_agent_run
+  ON task_run_attempts(agent_run_id) WHERE agent_run_id IS NOT NULL;
+
+-- Append-only transition/audit history. The partial unique index is the
+-- durable idempotency barrier for user actions, including concurrent retries.
+CREATE TABLE IF NOT EXISTS task_run_events (
+  id              TEXT PRIMARY KEY,
+  company_id      TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  run_id          TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
+  attempt_id      TEXT REFERENCES task_run_attempts(id) ON DELETE SET NULL,
+  actor_id        TEXT,
+  kind            TEXT NOT NULL,
+  from_status     TEXT,
+  to_status       TEXT,
+  revision        INTEGER NOT NULL,
+  idempotency_key TEXT,
+  data            JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_task_run_events_run_created
+  ON task_run_events(run_id, created_at ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_run_events_idempotency
+  ON task_run_events(run_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS shipping_features (
   id                TEXT PRIMARY KEY,
   company_id        TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, jsonb, boolean, index } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
 export const conversations = pgTable('conversations', {
   id: text('id').primaryKey(),
@@ -120,6 +120,77 @@ export const calendarDispatches = pgTable(
   },
 )
 
+/** Product Task Runs are user-visible execution lifecycles. They intentionally
+ * remain separate from `agent_runs`, which records lower-level scheduler turns. */
+export const taskRuns = pgTable(
+  'task_runs',
+  {
+    id: text('id').primaryKey(),
+    companyId: text('company_id').notNull(),
+    conversationId: text('conversation_id'),
+    sourceMessageId: text('source_message_id'),
+    createdBy: text('created_by').notNull(),
+    assigneeId: text('assignee_id'),
+    nextActorId: text('next_actor_id'),
+    title: text('title').notNull(),
+    summary: text('summary').default('').notNull(),
+    consequence: text('consequence').default('').notNull(),
+    status: text('status').notNull(),
+    pausedFromStatus: text('paused_from_status'),
+    revision: integer('revision').default(1).notNull(),
+    currentAttempt: integer('current_attempt').default(1).notNull(),
+    result: jsonb('result').$type<Record<string, unknown> | null>(),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    companyUpdatedIdx: index('idx_task_runs_company_updated').on(table.companyId, table.updatedAt),
+    conversationUpdatedIdx: index('idx_task_runs_conversation_updated').on(table.conversationId, table.updatedAt),
+  }),
+)
+
+export const taskRunAttempts = pgTable(
+  'task_run_attempts',
+  {
+    id: text('id').primaryKey(),
+    runId: text('run_id').notNull().references(() => taskRuns.id, { onDelete: 'cascade' }),
+    attemptNo: integer('attempt_no').notNull(),
+    agentRunId: text('agent_run_id'),
+    status: text('status').notNull(),
+    error: text('error'),
+    output: jsonb('output').$type<Record<string, unknown> | null>(),
+    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+  },
+  (table) => ({
+    runAttemptIdx: uniqueIndex('idx_task_run_attempts_run_no').on(table.runId, table.attemptNo),
+  }),
+)
+
+export const taskRunEvents = pgTable(
+  'task_run_events',
+  {
+    id: text('id').primaryKey(),
+    companyId: text('company_id').notNull(),
+    runId: text('run_id').notNull().references(() => taskRuns.id, { onDelete: 'cascade' }),
+    attemptId: text('attempt_id').references(() => taskRunAttempts.id, { onDelete: 'set null' }),
+    actorId: text('actor_id'),
+    kind: text('kind').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    revision: integer('revision').notNull(),
+    idempotencyKey: text('idempotency_key'),
+    data: jsonb('data').$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    runCreatedIdx: index('idx_task_run_events_run_created').on(table.runId, table.createdAt),
+    idempotencyIdx: uniqueIndex('idx_task_run_events_idempotency').on(table.runId, table.idempotencyKey),
+  }),
+)
+
 export interface PollOption {
   id: string
   text: string
@@ -148,3 +219,6 @@ export type DbParticipant = typeof participants.$inferSelect
 export type DbCalendarEvent = typeof calendarEvents.$inferSelect
 export type DbCalendarDispatch = typeof calendarDispatches.$inferSelect
 export type DbCalendarReminder = typeof calendarReminders.$inferSelect
+export type DbTaskRun = typeof taskRuns.$inferSelect
+export type DbTaskRunAttempt = typeof taskRunAttempts.$inferSelect
+export type DbTaskRunEvent = typeof taskRunEvents.$inferSelect
